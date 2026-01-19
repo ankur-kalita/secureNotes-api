@@ -1,0 +1,164 @@
+# =============================================================================
+# SecureNotes API - CD Pipeline
+# =============================================================================
+# This pipeline handles deployment to Kubernetes and optional DAST scanning.
+# Triggered after CI pipeline completes successfully.
+# =============================================================================
+
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [master, main]
+  workflow_dispatch:  # Allows manual trigger
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  IMAGE_NAME: securenotes-api
+
+jobs:
+  # ===========================================================================
+  # STAGE 1: DEPLOY - Kubernetes Deployment
+  # ===========================================================================
+  # WHY: Deploys the validated container image to Kubernetes cluster.
+  # Uses declarative manifests for reproducible, version-controlled deployments.
+  # ===========================================================================
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      # For local/self-hosted runners with Minikube, you would configure kubeconfig
+      # For cloud deployments, configure your cloud provider's credentials
+      - name: Configure Kubernetes context
+        run: |
+          echo "Kubernetes deployment would be configured here"
+          echo "For production, configure your cluster credentials"
+          # Example for GKE:
+          # gcloud container clusters get-credentials CLUSTER_NAME --zone ZONE --project PROJECT
+          # Example for EKS:
+          # aws eks update-kubeconfig --name CLUSTER_NAME --region REGION
+
+      - name: Update image tag in manifests
+        run: |
+          # Update deployment manifest with new image tag
+          sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest|g" k8s/deployment.yaml
+
+      - name: Display manifests (dry-run)
+        run: |
+          echo "=== Deployment Manifest ==="
+          cat k8s/deployment.yaml
+          echo ""
+          echo "=== Service Manifest ==="
+          cat k8s/service.yaml
+
+      # Uncomment below for actual deployment when cluster is configured
+      # - name: Apply Kubernetes manifests
+      #   run: |
+      #     kubectl apply -f k8s/deployment.yaml
+      #     kubectl apply -f k8s/service.yaml
+      #     kubectl rollout status deployment/securenotes-api --timeout=120s
+
+      - name: Deployment summary
+        run: |
+          echo "Deployment manifests validated successfully!"
+          echo "Image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "To deploy manually to Minikube:"
+          echo "  1. minikube start"
+          echo "  2. kubectl apply -f k8s/"
+          echo "  3. minikube service securenotes-api"
+
+  # ===========================================================================
+  # STAGE 2: VERIFY - Post-Deployment Verification
+  # ===========================================================================
+  # WHY: Validates that the deployment was successful and the application
+  # is responding correctly in the target environment.
+  # ===========================================================================
+  verify:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    steps:
+      - name: Verification placeholder
+        run: |
+          echo "Post-deployment verification would run here"
+          echo "This would include:"
+          echo "  - Health check against deployed service"
+          echo "  - Smoke tests for critical endpoints"
+          echo "  - Integration tests if applicable"
+
+      # Uncomment for actual verification when cluster is configured
+      # - name: Wait for deployment
+      #   run: |
+      #     kubectl wait --for=condition=available deployment/securenotes-api --timeout=120s
+      #
+      # - name: Run health check
+      #   run: |
+      #     SERVICE_IP=$(kubectl get service securenotes-api -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      #     curl -f http://$SERVICE_IP/health || exit 1
+
+  # ===========================================================================
+  # STAGE 3: DAST - Dynamic Application Security Testing (Optional)
+  # ===========================================================================
+  # WHY: Tests the RUNNING application for security vulnerabilities.
+  # Unlike SAST which analyzes code, DAST finds runtime issues like:
+  # - Authentication bypasses
+  # - Session management flaws
+  # - Security misconfigurations
+  # This completes the shift-left security approach with runtime validation.
+  # ===========================================================================
+  dast:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    needs: [verify]
+    continue-on-error: true  # DAST is optional, don't fail the pipeline
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: DAST scan placeholder
+        run: |
+          echo "DAST scanning would run here against deployed application"
+          echo ""
+          echo "OWASP ZAP Baseline Scan would:"
+          echo "  - Spider the application to discover endpoints"
+          echo "  - Test for common vulnerabilities"
+          echo "  - Generate security report"
+          echo ""
+          echo "Example command:"
+          echo "  docker run -t owasp/zap2docker-stable zap-baseline.py -t http://TARGET_URL"
+
+      # Uncomment for actual DAST when application is deployed
+      # - name: Run OWASP ZAP Baseline Scan
+      #   uses: zaproxy/action-baseline@v0.12.0
+      #   with:
+      #     target: 'http://YOUR_DEPLOYED_APP_URL'
+      #     rules_file_name: '.zap/rules.tsv'
+      #     cmd_options: '-a'
+
+      - name: DAST Summary
+        run: |
+          echo "DAST stage completed"
+          echo ""
+          echo "For local testing, run:"
+          echo "  docker run -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:8080"

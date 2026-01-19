@@ -1,0 +1,362 @@
+# =============================================================================
+# SecureNotes API - CI Pipeline
+# =============================================================================
+# This pipeline implements a production-grade CI workflow with:
+# - Code Quality (Linting)
+# - Security Scanning (SAST, SCA, Container Scanning)
+# - Testing (Unit Tests)
+# - Containerization (Docker Build, Push)
+# =============================================================================
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:  # Allows manual trigger
+
+env:
+  GO_VERSION: '1.22'
+  IMAGE_NAME: securenotes-api
+
+jobs:
+  # ===========================================================================
+  # STAGE 1: LINT - Code Quality Check
+  # ===========================================================================
+  # WHY: Fail-fast principle - catch code quality issues before expensive
+  # operations. Prevents technical debt and identifies bugs early.
+  # ===========================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  # ===========================================================================
+  # STAGE 2: SAST - Static Application Security Testing
+  # ===========================================================================
+  # WHY: Detects security vulnerabilities in source code BEFORE deployment.
+  # Catches OWASP Top 10 issues like SQL injection, XSS, path traversal.
+  # Shift-left security: Find issues when they're cheaper to fix.
+  # ===========================================================================
+  sast:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
+
+  # ===========================================================================
+  # STAGE 3: SCA - Software Composition Analysis
+  # ===========================================================================
+  # WHY: Identifies vulnerabilities in dependencies (supply chain security).
+  # Log4Shell (CVE-2021-44228) showed how a single vulnerable dependency
+  # can compromise millions of systems. This stage prevents that.
+  # ===========================================================================
+  sca:
+    name: SCA (Dependency Check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # ===========================================================================
+  # STAGE 4: UNIT TESTS - Business Logic Validation
+  # ===========================================================================
+  # WHY: Prevents regressions and validates business logic. Tests are the
+  # first line of defense against bugs. Coverage reports help identify
+  # untested code paths.
+  # ===========================================================================
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint]  # Only run if linting passes
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with coverage
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+
+  # ===========================================================================
+  # STAGE 5: BUILD - Application Compilation
+  # ===========================================================================
+  # WHY: Creates the deployable artifact. Validates that code compiles
+  # successfully with all dependencies resolved.
+  # ===========================================================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]  # Only build if lint and tests pass
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o securenotes-api ./cmd/api
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary
+          path: securenotes-api
+
+  # ===========================================================================
+  # STAGE 6: DOCKER BUILD - Container Image Creation
+  # ===========================================================================
+  # WHY: Packages application with all dependencies into a portable,
+  # reproducible container. Ensures consistent deployment across environments.
+  # ===========================================================================
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [build, sast, sca]  # Wait for all quality gates
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image for scanning
+        run: |
+          docker save ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+
+  # ===========================================================================
+  # STAGE 7: IMAGE SCAN - Container Vulnerability Detection
+  # ===========================================================================
+  # WHY: Base images (alpine, ubuntu) can have OS-level vulnerabilities even
+  # if application code is secure. Trivy scans both OS packages AND application
+  # dependencies, preventing deployment of vulnerable containers.
+  # ===========================================================================
+  image-scan:
+    name: Image Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy and upload SARIF
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ===========================================================================
+  # STAGE 8: RUNTIME TEST - Container Validation
+  # ===========================================================================
+  # WHY: Docker build success doesn't guarantee the container actually runs.
+  # A missing entrypoint, wrong port, or startup error would only be caught
+  # in production without this test. Validates the image is actually runnable.
+  # ===========================================================================
+  runtime-test:
+    name: Container Runtime Test
+    runs-on: ubuntu-latest
+    needs: [image-scan]
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
+      - name: Run container
+        run: |
+          docker run -d --name test-container -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          sleep 5  # Wait for container to start
+
+      - name: Test health endpoint
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health)
+          if [ "$response" != "200" ]; then
+            echo "Health check failed with status: $response"
+            docker logs test-container
+            exit 1
+          fi
+          echo "Health check passed!"
+
+      - name: Test API endpoint
+        run: |
+          # Test create note
+          response=$(curl -s -X POST http://localhost:8080/api/v1/notes \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Test Note","content":"Test Content"}')
+          echo "Create response: $response"
+
+          # Test get all notes
+          response=$(curl -s http://localhost:8080/api/v1/notes)
+          echo "Get all response: $response"
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f test-container || true
+
+  # ===========================================================================
+  # STAGE 9: PUSH - Registry Publication
+  # ===========================================================================
+  # WHY: Publishes the validated, scanned image to DockerHub for downstream
+  # deployment. Only runs after ALL quality gates pass (tests, security scans,
+  # runtime validation). Enables CD pipeline to pull trusted images.
+  # ===========================================================================
+  push:
+    name: Push to DockerHub
+    runs-on: ubuntu-latest
+    needs: [runtime-test]
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image pushed successfully
+        run: |
+          echo "Image pushed to DockerHub: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
