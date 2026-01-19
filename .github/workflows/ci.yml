@@ -18,7 +18,7 @@ on:
   workflow_dispatch:  # Allows manual trigger
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.23'
   IMAGE_NAME: securenotes-api
 
 jobs:
