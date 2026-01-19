@@ -1,0 +1,93 @@
+# =============================================================================
+# SecureNotes API - Kubernetes Deployment
+# =============================================================================
+# WHY: Declares the desired state for our application in Kubernetes.
+# Key features:
+# - Replica count for high availability
+# - Resource limits for cluster stability
+# - Health checks for automatic recovery
+# - Security context for least privilege
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: securenotes-api
+  labels:
+    app: securenotes-api
+    version: v1
+spec:
+  replicas: 2  # High availability - 2 pods minimum
+  selector:
+    matchLabels:
+      app: securenotes-api
+  template:
+    metadata:
+      labels:
+        app: securenotes-api
+        version: v1
+    spec:
+      # Security: Don't run as root
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      containers:
+        - name: securenotes-api
+          image: IMAGE_PLACEHOLDER  # Replaced by CI/CD pipeline
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+
+          # Environment variables
+          env:
+            - name: PORT
+              value: "8080"
+            - name: GIN_MODE
+              value: "release"
+
+          # Resource limits - prevents runaway containers
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
+          # Liveness probe - restarts unhealthy containers
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe - removes from service until ready
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Security context for container
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+      # Restart policy
+      restartPolicy: Always
+
+      # Graceful termination
+      terminationGracePeriodSeconds: 30

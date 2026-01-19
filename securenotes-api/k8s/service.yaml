@@ -1,0 +1,23 @@
+# =============================================================================
+# SecureNotes API - Kubernetes Service
+# =============================================================================
+# WHY: Exposes the application within and outside the cluster.
+# - LoadBalancer type for external access (cloud environments)
+# - For Minikube, use `minikube service securenotes-api` to access
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: securenotes-api
+  labels:
+    app: securenotes-api
+spec:
+  type: LoadBalancer  # Use NodePort for Minikube if LoadBalancer not available
+  ports:
+    - port: 80           # External port
+      targetPort: 8080   # Container port
+      protocol: TCP
+      name: http
+  selector:
+    app: securenotes-api
