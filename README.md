@@ -12,7 +12,7 @@ SecureNotes API is a simple yet functional notes management service that showcas
 
 ## Tech Stack
 
-- **Language**: Go 1.23
+- **Language**: Go 1.21
 - **Framework**: Gin (HTTP router)
 - **Container**: Docker (multi-stage build)
 - **Orchestration**: Kubernetes
@@ -54,7 +54,7 @@ securenotes-api/
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.21+
 - Docker
 - kubectl (for Kubernetes deployment)
 - Minikube (for local Kubernetes)

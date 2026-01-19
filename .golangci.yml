@@ -1,0 +1,43 @@
+# golangci-lint configuration for SecureNotes API
+# This enforces code quality standards in the CI pipeline
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Examine Go source code for suspicious constructs
+    - ineffassign   # Detect ineffective assignments
+    - staticcheck   # Advanced static analysis
+    - unused        # Check for unused code
+    - gofmt         # Check formatting
+    - goimports     # Check imports
+    - misspell      # Check for misspelled words
+    - gosec         # Security-focused linter
+    - bodyclose     # Check HTTP response body is closed
+
+linters-settings:
+  gosec:
+    severity: medium
+    confidence: medium
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+  max-issues-per-linter: 50
+  max-same-issues: 10
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
