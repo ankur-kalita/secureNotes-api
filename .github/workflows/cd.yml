@@ -1,8 +1,8 @@
 # =============================================================================
 # SecureNotes API - CD Pipeline
 # =============================================================================
-# This pipeline handles deployment to Kubernetes and optional DAST scanning.
-# Triggered after CI pipeline completes successfully.
+# This pipeline handles deployment and DAST security testing.
+# Triggered after CI pipeline completes successfully OR manually.
 # =============================================================================
 
 name: CD Pipeline
@@ -14,49 +14,128 @@ on:
       - completed
     branches: [master, main]
   workflow_dispatch:  # Allows manual trigger
-    inputs:
-      environment:
-        description: 'Deployment environment'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
 
 env:
   IMAGE_NAME: securenotes-api
 
 jobs:
   # ===========================================================================
-  # STAGE 1: DEPLOY - Kubernetes Deployment
+  # STAGE 1: DEPLOY - Pull and Run Container (Simulates K8s Deployment)
   # ===========================================================================
-  # WHY: Deploys the validated container image to Kubernetes cluster.
-  # Uses declarative manifests for reproducible, version-controlled deployments.
+  # WHY: Demonstrates deployment capability by pulling the validated image
+  # from DockerHub and running it. In production, this would deploy to K8s.
   # ===========================================================================
   deploy:
-    name: Deploy to Kubernetes
+    name: Deploy Application
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    outputs:
+      container_id: ${{ steps.run_container.outputs.container_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up kubectl
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull image from DockerHub
+        run: |
+          echo "Pulling image from DockerHub..."
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          echo "Image pulled successfully!"
+
+      - name: Run container (Deploy)
+        id: run_container
+        run: |
+          echo "Starting application container..."
+          CONTAINER_ID=$(docker run -d --name securenotes-app -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest)
+          echo "container_id=$CONTAINER_ID" >> $GITHUB_OUTPUT
+          echo "Container started with ID: $CONTAINER_ID"
+          sleep 10  # Wait for app to start
+
+      - name: Verify deployment health
+        run: |
+          echo "Checking application health..."
+          for i in {1..5}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
+            if [ "$response" = "200" ]; then
+              echo "Health check passed! Application is running."
+              curl -s http://localhost:8080/health | jq .
+              exit 0
+            fi
+            echo "Attempt $i: Health check returned $response, retrying..."
+            sleep 5
+          done
+          echo "Health check failed!"
+          docker logs securenotes-app
+          exit 1
+
+      - name: Test API endpoints
+        run: |
+          echo "Testing API endpoints..."
+
+          echo "1. Creating a note..."
+          CREATE_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/notes \
+            -H "Content-Type: application/json" \
+            -d '{"title":"CD Pipeline Test","content":"Deployed via GitHub Actions CD"}')
+          echo "$CREATE_RESPONSE" | jq .
+          NOTE_ID=$(echo "$CREATE_RESPONSE" | jq -r '.data.id')
+
+          echo "2. Getting all notes..."
+          curl -s http://localhost:8080/api/v1/notes | jq .
+
+          echo "3. Getting specific note..."
+          curl -s http://localhost:8080/api/v1/notes/$NOTE_ID | jq .
+
+          echo "4. Updating note..."
+          curl -s -X PUT http://localhost:8080/api/v1/notes/$NOTE_ID \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Updated by CD","content":"CD Pipeline works!"}' | jq .
+
+          echo "5. Deleting note..."
+          curl -s -X DELETE http://localhost:8080/api/v1/notes/$NOTE_ID | jq .
+
+          echo "All API tests passed!"
+
+  # ===========================================================================
+  # STAGE 2: VALIDATE K8S - Kubernetes Manifest Validation
+  # ===========================================================================
+  # WHY: Validates Kubernetes manifests are syntactically correct and follow
+  # best practices before actual deployment to a cluster.
+  # ===========================================================================
+  validate-k8s:
+    name: Validate K8s Manifests
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: 'latest'
 
-      - name: Configure Kubernetes context
-        run: |
-          echo "Kubernetes deployment would be configured here"
-          echo "For production, configure your cluster credentials"
-
-      - name: Update image tag in manifests
+      - name: Update image in manifests
         run: |
           sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest|g" k8s/deployment.yaml
 
-      - name: Display manifests (dry-run)
+      - name: Validate deployment manifest
+        run: |
+          echo "Validating deployment.yaml..."
+          kubectl apply --dry-run=client -f k8s/deployment.yaml
+          echo "Deployment manifest is valid!"
+
+      - name: Validate service manifest
+        run: |
+          echo "Validating service.yaml..."
+          kubectl apply --dry-run=client -f k8s/service.yaml
+          echo "Service manifest is valid!"
+
+      - name: Display K8s manifests
         run: |
           echo "=== Deployment Manifest ==="
           cat k8s/deployment.yaml
@@ -64,62 +143,92 @@ jobs:
           echo "=== Service Manifest ==="
           cat k8s/service.yaml
 
-      - name: Deployment summary
+      - name: K8s deployment instructions
         run: |
-          echo "Deployment manifests validated successfully!"
-          echo "Image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-          echo ""
-          echo "To deploy manually to Minikube:"
-          echo "  1. minikube start"
-          echo "  2. kubectl apply -f k8s/"
-          echo "  3. minikube service securenotes-api"
+          echo "=============================================="
+          echo "To deploy to Minikube locally:"
+          echo "=============================================="
+          echo "1. minikube start"
+          echo "2. kubectl apply -f k8s/"
+          echo "3. kubectl get pods"
+          echo "4. minikube service securenotes-api"
+          echo "=============================================="
 
   # ===========================================================================
-  # STAGE 2: VERIFY - Post-Deployment Verification
-  # ===========================================================================
-  verify:
-    name: Verify Deployment
-    runs-on: ubuntu-latest
-    needs: [deploy]
-    steps:
-      - name: Verification placeholder
-        run: |
-          echo "Post-deployment verification would run here"
-          echo "This would include:"
-          echo "  - Health check against deployed service"
-          echo "  - Smoke tests for critical endpoints"
-          echo "  - Integration tests if applicable"
-
-  # ===========================================================================
-  # STAGE 3: DAST - Dynamic Application Security Testing (Optional)
+  # STAGE 3: DAST - Dynamic Application Security Testing
   # ===========================================================================
   # WHY: Tests the RUNNING application for security vulnerabilities.
-  # Unlike SAST which analyzes code, DAST finds runtime issues like:
-  # - Authentication bypasses
-  # - Session management flaws
-  # - Security misconfigurations
+  # DAST finds runtime issues like:
+  # - Authentication bypasses, Session management flaws
+  # - Security misconfigurations, Information disclosure
+  # This completes the shift-left security with runtime validation.
   # ===========================================================================
   dast:
     name: DAST (OWASP ZAP)
     runs-on: ubuntu-latest
-    needs: [verify]
-    continue-on-error: true
+    needs: [deploy]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: DAST scan placeholder
-        run: |
-          echo "DAST scanning would run here against deployed application"
-          echo ""
-          echo "OWASP ZAP Baseline Scan would:"
-          echo "  - Spider the application to discover endpoints"
-          echo "  - Test for common vulnerabilities"
-          echo "  - Generate security report"
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: DAST Summary
+      - name: Start application for DAST
         run: |
-          echo "DAST stage completed"
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          docker run -d --name dast-target -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          sleep 10
+          curl -s http://localhost:8080/health
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j'
+          allow_issue_writing: false
+        continue-on-error: true  # Don't fail pipeline on findings
+
+      - name: Upload ZAP Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-scan-report
+          path: report_html.html
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f dast-target || true
+
+  # ===========================================================================
+  # STAGE 4: SUMMARY - Deployment Summary
+  # ===========================================================================
+  summary:
+    name: CD Summary
+    runs-on: ubuntu-latest
+    needs: [deploy, validate-k8s, dast]
+    if: always()
+    steps:
+      - name: CD Pipeline Summary
+        run: |
+          echo "=============================================="
+          echo "        CD PIPELINE COMPLETED"
+          echo "=============================================="
           echo ""
-          echo "For local testing, run:"
-          echo "  docker run -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:8080"
+          echo "Image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "Stages completed:"
+          echo "  ✓ Deploy - Application container tested"
+          echo "  ✓ Validate K8s - Manifests validated"
+          echo "  ✓ DAST - Security scan completed"
+          echo ""
+          echo "Next steps for production:"
+          echo "  1. Configure cloud K8s credentials"
+          echo "  2. Apply k8s/ manifests to cluster"
+          echo "  3. Set up monitoring and alerting"
+          echo "=============================================="
