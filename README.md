@@ -63,7 +63,7 @@ securenotes-api/
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/securenotes-api.git
+git clone https://github.com/ankur-kalita/securenotes-api.git
 cd securenotes-api
 
 # Install dependencies
