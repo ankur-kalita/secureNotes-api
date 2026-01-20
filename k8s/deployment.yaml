@@ -37,7 +37,7 @@ spec:
       containers:
         - name: securenotes-api
           image: ankur42069/securenotes-api:latest  # Replaced by CI/CD pipeline
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent  # Use local image if available
           ports:
             - containerPort: 8080
               protocol: TCP
