@@ -36,7 +36,7 @@ spec:
 
       containers:
         - name: securenotes-api
-          image: IMAGE_PLACEHOLDER  # Replaced by CI/CD pipeline
+          image: ankur42069/securenotes-api:latest  # Replaced by CI/CD pipeline
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
