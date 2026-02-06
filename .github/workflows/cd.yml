@@ -119,10 +119,6 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Update image in manifests
-        run: |
-          sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest|g" k8s/deployment.yaml
-
       - name: Validate deployment manifest
         run: |
           echo "Validating deployment.yaml..."
@@ -215,7 +211,7 @@ jobs:
   deploy-k8s:
     name: Deploy to Local K8s
     runs-on: self-hosted
-    needs: [validate-k8s]
+    needs: [deploy]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
