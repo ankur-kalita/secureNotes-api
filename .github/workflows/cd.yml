@@ -122,13 +122,13 @@ jobs:
       - name: Validate deployment manifest
         run: |
           echo "Validating deployment.yaml..."
-          kubectl apply --dry-run=client --validate=false -f k8s/deployment.yaml
+          kubectl create --dry-run=client -f k8s/deployment.yaml -o yaml > /dev/null
           echo "Deployment manifest is valid!"
 
       - name: Validate service manifest
         run: |
           echo "Validating service.yaml..."
-          kubectl apply --dry-run=client --validate=false -f k8s/service.yaml
+          kubectl create --dry-run=client -f k8s/service.yaml -o yaml > /dev/null
           echo "Service manifest is valid!"
 
       - name: Display K8s manifests
