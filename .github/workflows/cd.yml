@@ -206,12 +206,43 @@ jobs:
           docker rm -f dast-target || true
 
   # ===========================================================================
-  # STAGE 4: SUMMARY - Deployment Summary
+  # STAGE 4: DEPLOY TO LOCAL K8S - Self-hosted Runner on Minikube
+  # ===========================================================================
+  # WHY: Deploys the validated image to local Minikube cluster via a
+  # self-hosted runner running on the developer's machine. This demonstrates
+  # full GitOps: code change -> CI -> CD -> auto-deploy to K8s.
+  # ===========================================================================
+  deploy-k8s:
+    name: Deploy to Local K8s
+    runs-on: self-hosted
+    needs: [validate-k8s]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Minikube
+        run: |
+          echo "Deploying to local Minikube cluster..."
+          kubectl apply -f k8s/
+          kubectl rollout restart deployment/securenotes-api
+          kubectl rollout status deployment/securenotes-api --timeout=120s
+          echo "Deployment successful!"
+
+      - name: Verify deployment
+        run: |
+          sleep 10
+          NODE_PORT=$(kubectl get svc securenotes-api -o jsonpath='{.spec.ports[0].nodePort}')
+          MINIKUBE_IP=$(minikube ip)
+          echo "App running at http://${MINIKUBE_IP}:${NODE_PORT}"
+          curl -s http://${MINIKUBE_IP}:${NODE_PORT}/health
+
+  # ===========================================================================
+  # STAGE 5: SUMMARY - Deployment Summary
   # ===========================================================================
   summary:
     name: CD Summary
     runs-on: ubuntu-latest
-    needs: [deploy, validate-k8s, dast]
+    needs: [deploy, validate-k8s, dast, deploy-k8s]
     if: always()
     steps:
       - name: CD Pipeline Summary
@@ -226,9 +257,6 @@ jobs:
           echo "  ✓ Deploy - Application container tested"
           echo "  ✓ Validate K8s - Manifests validated"
           echo "  ✓ DAST - Security scan completed"
+          echo "  ✓ Deploy K8s - Deployed to local Minikube"
           echo ""
-          echo "Next steps for production:"
-          echo "  1. Configure cloud K8s credentials"
-          echo "  2. Apply k8s/ manifests to cluster"
-          echo "  3. Set up monitoring and alerting"
           echo "=============================================="

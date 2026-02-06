@@ -106,7 +106,8 @@ curl http://localhost:8080/health
 minikube start
 
 # Update image in deployment (replace YOUR_USERNAME)
-sed -i 's|IMAGE_PLACEHOLDER|YOUR_DOCKERHUB_USERNAME/securenotes-api:latest|g' k8s/deployment.yaml
+sed -i '' 's|IMAGE_PLACEHOLDER|YOUR_DOCKERHUB_USERNAME/securenotes-api:latest|g' k8s/deployment.yaml
+
 
 # Deploy
 kubectl apply -f k8s/
