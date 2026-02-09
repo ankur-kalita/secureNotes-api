@@ -237,20 +237,23 @@ jobs:
           kubectl wait --for=condition=ready pod -l app=securenotes-api --timeout=120s || true
           kubectl get pods -l app=securenotes-api
 
-          # Use minikube service to get a reachable URL (handles macOS Docker driver networking)
-          APP_URL=$(minikube service securenotes-api --url)
-          echo "App running at ${APP_URL}"
+          # Use port-forward instead of minikube service (which blocks on macOS Docker driver)
+          kubectl port-forward svc/securenotes-api 8080:80 &
+          PF_PID=$!
+          sleep 3
 
           for i in {1..6}; do
-            if curl -sf --connect-timeout 5 --max-time 10 "${APP_URL}/health"; then
+            if curl -sf --connect-timeout 5 --max-time 10 http://localhost:8080/health; then
               echo ""
               echo "Health check passed! Application is running."
+              kill $PF_PID 2>/dev/null || true
               exit 0
             fi
             echo "Attempt $i: not ready yet, retrying in 10s..."
             sleep 10
           done
           echo "Health check failed after retries!"
+          kill $PF_PID 2>/dev/null || true
           kubectl get pods -l app=securenotes-api
           kubectl describe pods -l app=securenotes-api
           kubectl logs -l app=securenotes-api --tail=30
