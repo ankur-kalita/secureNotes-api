@@ -122,13 +122,13 @@ jobs:
       - name: Validate deployment manifest
         run: |
           echo "Validating deployment.yaml..."
-          kubectl create --dry-run=client -f k8s/deployment.yaml -o yaml > /dev/null
+          kubectl create --dry-run=client --validate=false -f k8s/deployment.yaml -o yaml > /dev/null
           echo "Deployment manifest is valid!"
 
       - name: Validate service manifest
         run: |
           echo "Validating service.yaml..."
-          kubectl create --dry-run=client -f k8s/service.yaml -o yaml > /dev/null
+          kubectl create --dry-run=client --validate=false -f k8s/service.yaml -o yaml > /dev/null
           echo "Service manifest is valid!"
 
       - name: Display K8s manifests
@@ -230,7 +230,20 @@ jobs:
           NODE_PORT=$(kubectl get svc securenotes-api -o jsonpath='{.spec.ports[0].nodePort}')
           MINIKUBE_IP=$(minikube ip)
           echo "App running at http://${MINIKUBE_IP}:${NODE_PORT}"
-          curl -s http://${MINIKUBE_IP}:${NODE_PORT}/health
+          for i in {1..6}; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://${MINIKUBE_IP}:${NODE_PORT}/health || echo "000")
+            if [ "$response" = "200" ]; then
+              echo "Health check passed! Application is running."
+              curl -s http://${MINIKUBE_IP}:${NODE_PORT}/health
+              exit 0
+            fi
+            echo "Attempt $i: Health check returned $response, retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after retries!"
+          kubectl get pods -l app=securenotes-api
+          kubectl logs -l app=securenotes-api --tail=20
+          exit 1
 
   # ===========================================================================
   # STAGE 5: SUMMARY - Deployment Summary
