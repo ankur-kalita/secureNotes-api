@@ -233,23 +233,27 @@ jobs:
 
       - name: Verify deployment
         run: |
-          sleep 10
-          NODE_PORT=$(kubectl get svc securenotes-api -o jsonpath='{.spec.ports[0].nodePort}')
-          MINIKUBE_IP=$(minikube ip)
-          echo "App running at http://${MINIKUBE_IP}:${NODE_PORT}"
+          echo "Waiting for pods to be ready..."
+          kubectl wait --for=condition=ready pod -l app=securenotes-api --timeout=120s || true
+          kubectl get pods -l app=securenotes-api
+
+          # Use minikube service to get a reachable URL (handles macOS Docker driver networking)
+          APP_URL=$(minikube service securenotes-api --url)
+          echo "App running at ${APP_URL}"
+
           for i in {1..6}; do
-            response=$(curl -s -o /dev/null -w "%{http_code}" http://${MINIKUBE_IP}:${NODE_PORT}/health || echo "000")
-            if [ "$response" = "200" ]; then
+            if curl -sf --connect-timeout 5 --max-time 10 "${APP_URL}/health"; then
+              echo ""
               echo "Health check passed! Application is running."
-              curl -s http://${MINIKUBE_IP}:${NODE_PORT}/health
               exit 0
             fi
-            echo "Attempt $i: Health check returned $response, retrying in 10s..."
+            echo "Attempt $i: not ready yet, retrying in 10s..."
             sleep 10
           done
           echo "Health check failed after retries!"
           kubectl get pods -l app=securenotes-api
-          kubectl logs -l app=securenotes-api --tail=20
+          kubectl describe pods -l app=securenotes-api
+          kubectl logs -l app=securenotes-api --tail=30
           exit 1
 
   # ===========================================================================
