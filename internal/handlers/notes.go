@@ -10,7 +10,7 @@ import (
 )
 
 // Version is the application version (set during build)
-var Version = "1.0.0"
+var Version = "1.0.1"
 
 // NotesHandler handles HTTP requests for notes
 type NotesHandler struct {
