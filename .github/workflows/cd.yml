@@ -114,21 +114,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest'
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz -C /usr/local/bin
 
       - name: Validate deployment manifest
         run: |
           echo "Validating deployment.yaml..."
-          kubectl create --dry-run=client --validate=false -f k8s/deployment.yaml -o yaml > /dev/null
+          kubeconform -strict -summary k8s/deployment.yaml
           echo "Deployment manifest is valid!"
 
       - name: Validate service manifest
         run: |
           echo "Validating service.yaml..."
-          kubectl create --dry-run=client --validate=false -f k8s/service.yaml -o yaml > /dev/null
+          kubeconform -strict -summary k8s/service.yaml
           echo "Service manifest is valid!"
 
       - name: Display K8s manifests
@@ -215,6 +214,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Ensure Minikube is running
+        run: |
+          if ! minikube status | grep -q "Running"; then
+            echo "Minikube is not running, starting..."
+            minikube start
+          fi
+          kubectl cluster-info
 
       - name: Deploy to Minikube
         run: |
